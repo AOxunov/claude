@@ -5,7 +5,13 @@ date: 2026-09-17
 
 # RealPay Merchant API — что реализует EasyTrip
 
-Эти 5 эндпоинтов **вызывает RealPay**, а реализуем их мы — за каждую подключённую турфирму.
+Эти 5 эндпоинтов **вызывает RealPay**, а реализуем их мы — за каждый подключённый объект
+(отель, ресторан, магазин).
+
+> Здесь — контракт по документации RealPay. **Наша реализация** (SQL/JS стадий, схема с
+> `payment_id`) — в [[Эндпоинты-easy-trip]]. Разделы «Наша логика» ниже написаны до схемы
+> с `payment_id` и устарели. Адрес: `https://easy-trip.com/endpoint/api/v1/stage/real-pay/callback/…`;
+> платформа отдаёт ответ в своём конверте, наши поля — в `data`.
 Обзор: [[00-Обзор]]. Обратная сторона: [[Agent-API-RealPay]].
 
 Источник: [Google Doc «RealPay Merchant API»](https://docs.google.com/document/d/1H2-Q8PQJcusay0XPZJevfPcvRlthSs7qkE6cZB2Ekxo),

@@ -5,11 +5,24 @@ date: 2026-09-17
 
 # Таблица `merchant`
 
-Турфирма, подключённая к RealPay через easy-trip как агента. **Одна строка = одна турфирма
-= один мерчант RealPay = одна касса.** Большая часть колонок — это поля запроса
-`merchant/v1/create` и сохранённые куски его ответа.
+Объект-партнёр (отель, ресторан, магазин из `places`), подключённый к RealPay через easy-trip
+как агента. **Одна строка = один объект (`place_id`) = один мерчант RealPay = одна касса.**
+Большая часть колонок — это поля запроса `merchant/v1/create` и сохранённые куски его ответа.
 
-Контекст: [[00-Обзор]], поля API — [[Agent-API-RealPay]] (раздел про `merchant/v1/create`).
+Контекст: [[00-Обзор]], поля API — [[Agent-API-RealPay]] (раздел про `merchant/v1/create`),
+эндпоинт регистрации — [[Эндпоинты-easy-trip]].
+
+> **Обновление 2026-09-22.**
+> - Таблица, судя по колонкам, взята из проекта edu: `client_id`, `checkout_id`,
+>   `payment_type_id`, `payment_purpose` оттуда; в easy-trip не используются.
+>   JSON-колонки повторяют ответ merchant-billing, но регистрируем через агентский сервис —
+>   пути в ответе на уровень глубже (`data.merchant_response.…`).
+> - Создан `unique index merchant_kassa_id_uindex on merchant (kassa_id)`.
+> - `kassa_id` меняется, если мерчанту создали новую кассу (`kassa/v1/create`) —
+>   обновлять вручную: `update merchant set kassa_id = … where merchant_rp_id = …`.
+> - Тестовая строка stage: `merchant_rp_id = 809`, `kassa_id = 3f65645e-62d0-40b9-913b-091ea0541d31`.
+> - Кассу для оплаты ищем по `place_id`: `payment/create` берёт `merchant` с этим `place_id`,
+>   `state = 1` и непустым `kassa_id`.
 
 Условные обозначения: ❓ — назначение не подтверждено, это предположение.
 

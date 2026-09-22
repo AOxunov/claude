@@ -16,9 +16,11 @@ date: 2026-09-17
 - JSON в обе стороны.
 - Любой ответ завёрнут в конверт:
   ```json
-  { "code": 200, "data": { }, "message": "OK", "additional": {} }
+  { "code": 0, "data": { }, "message": "Muvaffaqiyatli" }
   ```
 - **Успех определяем по `code` в конверте, а не по HTTP-статусу.**
+- **Успешный `code` — `0`**, а не `200`, как в примерах PDF: так ответил
+  `kassa-template/v1/create` на stage 2026-09-18. Ошибки — отрицательные коды.
 
 ### Ошибки
 
@@ -59,8 +61,8 @@ date: 2026-09-17
    HTTP 200 с `code: -8`, а скрипт будет отдавать мёртвый токен до конца TTL.
    Нужна общая обёртка для всех вызовов RealPay:
    `code === -8` → удалить ключ → `sign-in` → **один** повтор запроса.
-4. Проверять `resp.code === 200`, а не только наличие токена — будет понятная ошибка
-   при неверном пароле.
+4. Проверять `resp.code` (успех — `0`, не `200`), а не только наличие токена —
+   будет понятная ошибка при неверном пароле.
 5. Гонка: при пустом кэше параллельные запросы сделают несколько `sign-in`.
    Безвредно, если RealPay не отзывает старые токены; в любом случае закрывается пунктом 3.
 
@@ -124,7 +126,7 @@ date: 2026-09-17
 ### Шаблоны касс
 | Метод | Путь | Назначение |
 |---|---|---|
-| POST | `/kassa-template/v1/create` | тело — конфигурация кассы (`KassaCreateRequest`), ответ — строка. Откуда берётся имя шаблона — неясно |
+| POST | `/kassa-template/v1/create` | тело — конфигурация кассы (`KassaCreateRequest`), ответ — **имя шаблона**, которое генерирует RealPay (32 hex, похоже на MD5): `{"data":"f4b213c4…","code":0}`. Это не касса |
 | GET | `/kassa-template/v1/get-all` | `{имя: KassaCreateRequest}` |
 | DELETE | `/kassa-template/v1/delete?name=…` | `true/false` |
 
@@ -281,3 +283,30 @@ date: 2026-09-17
 - `sign_type` — в PDF только EIMZO, на деле 7 вариантов.
 - Путь к id мерчанта в ответе `create` — см. выше.
 - В Swagger безопасность объявлена глобально, включая `sign-in`, но по факту он публичный.
+
+## Шаблоны и кассы на практике (2026-09-18…22)
+
+- Касса создаётся **из шаблона по имени**: в `merchant/v1/create` или `kassa/v1/create`
+  блок кассы — `{name_uz, name_ru, name_en, template_name}` без вложенного `kassa`.
+  Можно и без шаблона — вложенным `kassa` с полной настройкой.
+- Касса **копирует** шаблон в момент создания. Изменение шаблона на существующие кассы не
+  влияет, API изменения кассы нет → новые поля = новая касса и повторная активация для
+  каждого мерчанта.
+- Ответ `kassa/v1/create`: `data.id` — `kassa_id` (UUID с дефисами), `data.status` = `NEW`,
+  `data.type.type` = `WITH_BILLING`, `data.credentials` — URL/логин/пароль из шаблона
+  (отдаются открыто!), `data.bank_response`, `data.merchant_bank_id`.
+- Кассы мерчанта: `GET /kassa/v1/all?merchant_id=<merchant_rp_id>` → `data.items[].id`.
+  `merchant/v1/get-by-id` кассы не возвращает.
+- Шаблоны — отдельно в агенте и в merchant-billing; шаблон из billing по `template_name`
+  в агенте не найдётся. В billing один шаблон на аккаунт (`get`/`delete` без имени),
+  мерчант — `registration/v1/create` с ключами `document_info_request` /
+  `merchant_full_info` / `kassa_create_request {name_*, ofd_type}`.
+
+## Удаление мерчанта / кассы
+Сразу удалить нельзя — только заявка, которую рассматривает RealPay:
+- мерчант целиком: `POST /merchant/v1/delete` `{merchant_id, phone_number, contract_language, email?}`
+  → заявка `CONTRACT_CANCEL`, в ответе `application_id`, `document_url`;
+- одна касса: `POST /merchant/v1/kassa-inactivate` `{merchant_id, kassa_id, phone_number,
+  contract_language, application_reason, begin_date, end_date}` → заявка `KASSA_CANCEL`;
+- статус заявки: `GET /application/{id}` или `/application/all?merchant_id=` (`ACTIVE` → `RESOLVED`/`REJECTED`).
+У себя ставить `merchant.state = 0` после `RESOLVED`.
