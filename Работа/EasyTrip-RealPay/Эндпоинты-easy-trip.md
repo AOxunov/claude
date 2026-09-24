@@ -428,6 +428,8 @@ if (phoneDigits.length >= 9) {
 return res;
 ```
 Значения enum для `ITEMS`: `select unnest(enum_range(null::project.place_type));`.
+**Ресторан — `MEAL_PLACE`, а не `RESTAURANT`** (видно по `POST v1/meal-place`, 2026-09-24) —
+ключ в `ITEMS` поправить в эндпоинте.
 Ключ `HOTEL` подтверждён 2026-09-22 (отель «Bibixonim mehmonxonasi» получил позицию
 «Mehmonxona xizmatlari uchun to'lov»); ресторан и магазин — проверить.
 `/info` вручную с настоящим платежом отвечает `0` — проверено 2026-09-22.
