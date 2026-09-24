@@ -76,7 +76,11 @@ date: 2026-09-22
   Лишние или отсутствующие поля → `code: -1039` «Xizmat parametrlari noto'g'ri».
   Так было на старой кассе: приложение слало `merchant_id` и `amount`, а касса ждала `phone`/`payer_name`.
 - `merchant_id` в SDK не нужен: касса определяется по `kassa_id`.
-- Нужно ли передавать `amount` в `param_in_values` — смотреть в `service/v1/get` новой кассы.
+- **`amount` обязателен в `param_in_values`** вместе с `payment_id` (проверено 2026-09-22):
+  с одним `payment_id` — `-1039`, с `payment_id` + `amount` запрос проходит дальше.
+  Сумма должна совпадать с суммой из `payment/create`.
+- `-1126` «Providerdan xatolik qabul qilindi!» — RealPay вызвал наш callback (`/info`)
+  и счёл ответ ошибкой: отрицательный `response_code`, 401/500 или неразобранный ответ.
 - `client_id` — клиент RealPay, к нему привязаны карты. **У каждого пользователя easy-trip
   должен быть свой**, иначе карты общие. Проверить в `auth/sdk`.
 - `sms_suffix` — обычно хеш приложения для автоподстановки SMS на Android; в тесте была заглушка `smsSuffix`.

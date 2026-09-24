@@ -281,12 +281,13 @@ return match[1];
 
 ### `payment_insert` (тот же handler, что у `merchant_insert`)
 ```sql
-insert into realpay_transaction (user_id, place_id, merchant_id, kassa_id, amount)
+insert into realpay_transaction (user_id, place_id, merchant_id, kassa_id, amount, state)
 select u.user_id,
        m.place_id,
        m.id,
        m.kassa_id,
-       #amount::numeric
+       #amount::numeric,
+       1
 from merchant m,
      auth_users u
 where m.place_id = #place_id::uuid
@@ -299,6 +300,12 @@ returning id, kassa_id, amount
 ```
 `sub` сравнивается и с `auth_users.user_id`, и с `auth_users.id` — какой колонке он
 соответствует, не уточняли. В платёж пишется `u.user_id`.
+
+**`state` передаём явно.** 2026-09-22 строки из `payment/create` получили `state = null`,
+хотя у колонки `default 1`, — видимо, платформа сама заполняет служебные колонки. Из-за этого
+все callback-и (`t.state = 1`) не находили платёж: `/info` отвечал `-1`, а RealPay показывал
+приложению `-1126`. Исправлено: `state` в `insert`, `update … set state = 1 where state is null`,
+`alter column state set not null`.
 
 ### `_body`
 ```js
@@ -421,6 +428,9 @@ if (phoneDigits.length >= 9) {
 return res;
 ```
 Значения enum для `ITEMS`: `select unnest(enum_range(null::project.place_type));`.
+Ключ `HOTEL` подтверждён 2026-09-22 (отель «Bibixonim mehmonxonasi» получил позицию
+«Mehmonxona xizmatlari uchun to'lov»); ресторан и магазин — проверить.
+`/info` вручную с настоящим платежом отвечает `0` — проверено 2026-09-22.
 
 ---
 
