@@ -90,19 +90,23 @@ create function project.ti_currency_rate(p_currency varchar, p_at timestamptz de
 as
 $$
 declare
-    v_day date := (p_at at time zone 'Asia/Tashkent')::date;
+    v_day  date := (p_at at time zone 'Asia/Tashkent')::date;
+    v_rate numeric;
+    v_date date;
 begin
     select r.rate, r.rate_date
-    into rate, rate_date
+    into v_rate, v_date
     from project.ti_currency_rates r
     where r.currency = upper(p_currency)
       and r.rate_date <= v_day
     order by r.rate_date desc
     limit 1;
 
-    if rate is null or rate_date < v_day - 7 then
-        raise exception 'Нет свежего курса % на %: последний от %', upper(p_currency), v_day, rate_date;
+    if v_rate is null or v_date < v_day - 7 then
+        raise exception 'Нет свежего курса % на %: последний от %', upper(p_currency), v_day, v_date;
     end if;
+    rate := v_rate;
+    rate_date := v_date;
 end;
 $$;
 
@@ -1092,7 +1096,6 @@ create function project.ti_bonus_discount_apply(p_payment_id uuid, p_min_pay num
     language plpgsql
 as
 $$
-#variable_conflict use_column
 declare
     t           project.realpay_transaction%rowtype;
     d           project.ti_bonus_discounts%rowtype;
@@ -1594,7 +1597,6 @@ create function project.ti_bonus_draw_freeze(p_draw_id uuid)
     language plpgsql
 as
 $$
-#variable_conflict use_column
 declare
     d       project.ti_bonus_draws%rowtype;
     v_cnt   integer;
@@ -1739,7 +1741,6 @@ create function project.ti_bonus_draw_run(p_draw_id uuid, p_random_response text
     language plpgsql
 as
 $$
-#variable_conflict use_column
 declare
     d        project.ti_bonus_draws%rowtype;
     v_resp   jsonb;
@@ -2030,7 +2031,7 @@ select c.id,
 from project.ti_bonus_cards c
          left join project.ti_bonus_card_ledger l on l.card_id = c.id
 where c.status in ('ACTIVE', 'REVOKED')
-group by c.id
+group by c.id, c.user_id, c.balance_usd, c.accrued_usd
 having c.balance_usd <> coalesce(sum(l.amount_usd), 0)
     or c.accrued_usd <> coalesce(sum(l.amount_usd) filter (where l.op_type in ('ISSUE', 'ACCRUAL')), 0);
 comment on view project.ti_bonus_card_mismatches is 'Карты, у которых кеш остатка или начисленного разошёлся с журналом. Должно быть пусто';
