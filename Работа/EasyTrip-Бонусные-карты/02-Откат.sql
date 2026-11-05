@@ -7,30 +7,30 @@
 begin;
 set local lock_timeout = '5s';
 
-drop trigger if exists trg_bonus_payment_status on project.realpay_transaction;
-drop trigger if exists trg_bonus_place_discount_history on project.places;
+drop trigger if exists ti_trg_bonus_payment_status on project.realpay_transaction;
+drop trigger if exists ti_trg_bonus_place_discount_history on project.places;
 
--- возвращает строки bonus_cards и держит таблицу — удалить до таблиц
-drop function if exists project.bonus_user_cards(uuid);
+-- возвращает строки ti_bonus_cards и держит таблицу — удалить до таблиц
+drop function if exists project.ti_bonus_user_cards(uuid);
 
-drop view if exists project.bonus_prize_fund_balance;
-drop view if exists project.bonus_card_mismatches;
+drop view if exists project.ti_bonus_prize_fund_balance;
+drop view if exists project.ti_bonus_card_mismatches;
 
 drop table if exists
-    project.bonus_draw_winners,
-    project.bonus_draw_entries,
-    project.bonus_prize_fund_ledger,
-    project.bonus_draw_prizes,
-    project.bonus_draws,
-    project.bonus_card_ledger,
-    project.bonus_discounts,
-    project.bonus_cards,
-    project.bonus_card_types,
-    project.bonus_place_discount_history,
-    project.bonus_errors,
-    project.currency_rates;
+    project.ti_bonus_draw_winners,
+    project.ti_bonus_draw_entries,
+    project.ti_bonus_prize_fund_ledger,
+    project.ti_bonus_draw_prizes,
+    project.ti_bonus_draws,
+    project.ti_bonus_card_ledger,
+    project.ti_bonus_discounts,
+    project.ti_bonus_cards,
+    project.ti_bonus_card_types,
+    project.ti_bonus_place_discount_history,
+    project.ti_bonus_errors,
+    project.ti_currency_rates;
 
--- остальные функции bonus_* и currency_rate* в схеме project (их триггеры ушли вместе с таблицами)
+-- остальные функции ti_bonus_* и ti_currency_rate* в схеме project (их триггеры ушли вместе с таблицами)
 do
 $$
     declare
@@ -41,7 +41,7 @@ $$
             from pg_proc p
                      join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'project'
-              and (p.proname like 'bonus\_%' or p.proname like 'currency\_rate%')
+              and (p.proname like 'ti\_bonus\_%' or p.proname like 'ti\_currency\_rate%')
             loop
                 execute 'drop function ' || r.sig;
             end loop;
