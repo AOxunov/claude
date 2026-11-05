@@ -6,6 +6,8 @@
 
 begin;
 set local lock_timeout = '5s';
+-- удалять может только владелец — роль project, как и в 01-DDL.sql
+set local role project;
 
 drop trigger if exists ti_trg_bonus_payment_status on project.realpay_transaction;
 drop trigger if exists ti_trg_bonus_place_discount_history on project.places;

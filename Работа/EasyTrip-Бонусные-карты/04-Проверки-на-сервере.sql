@@ -9,17 +9,18 @@
 -- 1. Версия: нужна 13 или новее (на 02.11.2026 была 17)
 select version();
 
--- 2. Кто я и кто владелец таблиц, которые меняет скрипт.
---    Новая колонка и триггеры требуют владельца, и все новые таблицы станут его.
---    В колонке «можно» должно быть true; если false — сначала: set role <владелец>;
-select current_user                                                     as я,
-       t.tablename                                                      as таблица,
-       t.tableowner                                                     as владелец,
-       t.tableowner = current_user
-           or (select r.rolsuper from pg_roles r where r.rolname = current_user) as можно
-from pg_tables t
-where t.schemaname = 'project'
-  and t.tablename in ('places', 'realpay_transaction');
+-- 2. Права. Скрипт переходит на роль project (set local role project) и всё создаёт от её имени.
+--    Нужно: роль project есть, мне можно на неё переходить, project владеет places и
+--    realpay_transaction (новая колонка и триггеры) и может создавать объекты в схеме project.
+--    Все четыре колонки после «я» — true.
+select current_user                                                          as я,
+       exists (select 1 from pg_roles r where r.rolname = 'project')          as роль_есть,
+       pg_has_role(current_user, 'project', 'SET')                           as могу_перейти,
+       (select bool_and(t.tableowner = 'project')
+        from pg_tables t
+        where t.schemaname = 'project'
+          and t.tablename in ('places', 'realpay_transaction'))             as project_владелец,
+       has_schema_privilege('project', 'project', 'CREATE')                  as project_создаёт;
 
 -- 3. Имена свободны: обе строки — 0
 select 'объекты ti_ в project' as что, count(*) as сколько
