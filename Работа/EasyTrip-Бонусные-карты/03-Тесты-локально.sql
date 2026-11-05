@@ -69,6 +69,8 @@ $$;
 \set u4 '00000000-0000-4000-8000-000000000004'
 \set u5 '00000000-0000-4000-8000-000000000005'
 \set u6 '00000000-0000-4000-8000-000000000006'
+\set u7 '00000000-0000-4000-8000-000000000007'
+\set u8 '00000000-0000-4000-8000-000000000008'
 
 -- ---------------------------------------------------------------- данные
 insert into project.places (place_type, name_uz, card_discount_percentage, state, moderator_status)
@@ -110,7 +112,10 @@ select bonus_test.ok((select rate from project.currency_rate('usd', now() - inte
 select bonus_test.raises($$select project.currency_rate('USD', now() + interval '30 days')$$, 'курс старше 7 дней — ошибка');
 
 -- ---------------------------------------------------------------- 2. Покупка карты (через триггер)
-select pay_amount as x5_amount, pay_amount as x5_amount_chk from project.bonus_card_quote('x5') \gset
+select bonus_test.ok((select count(*) = 3 and bool_and((fund_tourist_rate + fund_object_rate) * total_usd = price_usd)
+                      from project.bonus_card_types),
+                     'доли в фонды: вся сумма карты × (доля туристов + доля объектов) = её цена');
+select pay_amount as x5_amount from project.bonus_card_quote('x5') \gset
 select bonus_test.ok(:x5_amount = 632522, 'X5 = 50 × 12 650,43 = 632 522 сум (целые)');
 
 select bonus_test.pay(:'u1', :'pl_card', :x5_amount) as p_card1 \gset
@@ -166,10 +171,10 @@ select bonus_test.ok((select count(*) = 2 and sum(amount_usd) = -40
                                  (select fully_accrued_at from project.bonus_cards where id = :'card3'), interval '1 month')
                       from project.bonus_card_ledger where card_id = :'card3' and op_type = 'BURN'),
                      'первое сгорание — через месяц после полного накопления');
-select bonus_test.ok((select count(*) = 4 and sum(amount_usd) filter (where fund = 'TOURIST') = 2
-                             and sum(amount_usd) filter (where fund = 'OBJECT') = 2
+select bonus_test.ok((select count(*) = 4 and sum(amount_usd) filter (where fund = 'TOURIST') = 10
+                             and sum(amount_usd) filter (where fund = 'OBJECT') = 10
                       from project.bonus_prize_fund_ledger where card_id = :'card3' and op_type = 'BURN'),
-                     'сгоревшие $40 / 10 пополам: по $2 в каждый фонд');
+                     'сгоревшие $40 с X2: / 2 и пополам — по $10 в каждый фонд');
 
 -- ---------------------------------------------------------------- 5. Скидка с одной карты
 select bonus_test.pay(:'u1', :'pl_hotel', 1000000) as p1 \gset
@@ -185,8 +190,8 @@ select bonus_test.ok((select status = 'CONFIRMED' and confirmed_at is not null f
                      'оплата → скидка подтверждена');
 select bonus_test.ok((select last_spent_at is not null and balance_usd = 42.10 from project.bonus_cards where id = :'card1'),
                      'покупка отмечена на карте');
-select bonus_test.ok((select count(*) = 2 and sum(amount_usd) = 0.79 from project.bonus_prize_fund_ledger
-                      where discount_id = :'d1' and op_type = 'SPEND'), 'в фонды по $0.395 от $7.90');
+select bonus_test.ok((select count(*) = 2 and sum(amount_usd) = 1.58 from project.bonus_prize_fund_ledger
+                      where discount_id = :'d1' and op_type = 'SPEND'), 'с X5 в фонды по $0.79 от $7.90 (/ 5 и пополам)');
 
 select bonus_test.pay(:'u1', :'pl_rej', 500000) as p_rej \gset
 select bonus_test.ok((select discount_id is null and pay_amount = 500000 from project.bonus_discount_apply(:'p_rej')),
@@ -216,7 +221,7 @@ select bonus_test.ok((select balance_usd from project.bonus_cards where id = :'c
                          and (select balance_usd from project.bonus_cards where id = :'card4b') = 90,
                      'списано сначала со старой ($40 → 0), остаток со следующей ($100 → 90)');
 select bonus_test.set_status(:'p2', 'ERROR');
-select bonus_test.ok((select status from project.bonus_discounts where id = :'d2') = 'RELEASED'
+select bonus_test.ok((select status = 'RELEASED' and returned_usd = 50 from project.bonus_discounts where id = :'d2')
                          and (select balance_usd from project.bonus_cards where id = :'card4a') = 40
                          and (select next_burn_at is not null from project.bonus_cards where id = :'card4a')
                          and (select balance_usd from project.bonus_cards where id = :'card4b') = 100,
@@ -230,9 +235,9 @@ select bonus_test.ok(:d3_usd = 7.90 and (select balance_usd from project.bonus_c
                      '200 000 сум в кафе: $7.90 со старой карты');
 select bonus_test.set_status(:'p3', 'SUCCESS');
 select bonus_test.set_status(:'p3', 'CANCELLED');
-select bonus_test.ok((select status from project.bonus_discounts where id = :'d3') = 'REFUNDED'
+select bonus_test.ok((select status = 'REFUNDED' and returned_usd = 7.90 from project.bonus_discounts where id = :'d3')
                          and (select balance_usd from project.bonus_cards where id = :'card4a') = 40,
-                     'отмена оплаты → скидка вернулась на карту');
+                     'отмена оплаты до розыгрыша → скидка вернулась на карту');
 select bonus_test.ok((select count(*) = 4 and sum(amount_usd) = 0 from project.bonus_prize_fund_ledger
                       where discount_id = :'d3'), 'взносы в фонды сняты зеркально');
 
@@ -327,9 +332,9 @@ select bonus_test.ok((select array_agg(discount_percent || '/' || coalesce(max_d
                      'история скидки: 10% → 15% → потолок $30, повтор без изменений не пишется');
 
 -- ---------------------------------------------------------------- 10. Розыгрыш туристов
-select bonus_test.ok((select collected_usd from project.bonus_prize_fund_balance where fund = 'TOURIST') = 3.79
-                         and (select collected_usd from project.bonus_prize_fund_balance where fund = 'OBJECT') = 3.79,
-                     'в фонды собрано по $3.79: (потрачено $35.80 + сгорело $40) / 10 пополам');
+select bonus_test.ok((select collected_usd from project.bonus_prize_fund_balance where fund = 'TOURIST') = 16.817
+                         and (select collected_usd from project.bonus_prize_fund_balance where fund = 'OBJECT') = 16.817,
+                     'в фонды собрано по $16.817: с X5 потрачено $14.22 / 5, с X2 потрачено $21.58 и сгорело $40 / 2, пополам');
 insert into project.bonus_prize_fund_ledger (fund, op_type, amount_usd, occurred_at, comment)
 values ('TOURIST', 'ADJUST', 100, now(), 'тест: пополнение'),
        ('OBJECT', 'ADJUST', 100, now(), 'тест: пополнение');
@@ -418,7 +423,50 @@ where draw_id = :'draw_t' and round_no = 1;
 select bonus_test.ok((select payout_status from project.bonus_draw_winners where draw_id = :'draw_t' and round_no = 1) = 'PAID',
                      'выплата отмечена');
 
--- ---------------------------------------------------------------- 12. Ежедневные, нехватка фонда, отмена, ранняя фиксация
+-- ---------------------------------------------------------------- 12. Отмена оплаты после розыгрыша
+select balance_usd as card1_before from project.bonus_cards where id = :'card1' \gset
+select bonus_test.set_status(:'p1', 'CANCELLED');
+select bonus_test.ok((select status = 'REFUNDED' and returned_usd = 0 from project.bonus_discounts where id = :'d1')
+                         and (select balance_usd from project.bonus_cards where id = :'card1') = :card1_before
+                         and not exists (select 1 from project.bonus_prize_fund_ledger where discount_id = :'d1' and op_type = 'REFUND')
+                         and (select count(*) = 2 from project.bonus_prize_fund_ledger where discount_id = :'d1' and op_type = 'SPEND'),
+                     'чек уже сыграл в розыгрыше: при отмене оплаты скидка на карту не вернулась, взносы в фонды остались');
+
+-- ---------------------------------------------------------------- 13. Сгорание по графику от полного накопления
+select bonus_test.pay(:'u7', :'pl_card', :x2_amount) as p_card7 \gset
+select project.bonus_card_order(:'p_card7', 'X2') as card7 \gset
+select project.bonus_card_activate(:'card7', now() - interval '50 days');
+select bonus_test.ok((select burn_count = 1 and balance_usd = 20
+                             and last_burned_at = project.bonus_add_interval(fully_accrued_at, interval '1 month')
+                             and next_burn_at = project.bonus_add_interval(fully_accrued_at, interval '2 months')
+                      from project.bonus_cards where id = :'card7'),
+                     'X2 за 50 дней: накоплена на 7-й день, через месяц сгорело $20, следующее — через 2 месяца от накопления');
+select next_burn_at as card7_next from project.bonus_cards where id = :'card7' \gset
+select bonus_test.pay(:'u7', :'pl_hotel', 100000) as p7 \gset
+select discount_id as d7 from project.bonus_discount_apply(:'p7') \gset
+select bonus_test.set_status(:'p7', 'SUCCESS');
+select bonus_test.ok((select next_burn_at = :'card7_next'::timestamptz and last_spent_at is not null
+                      from project.bonus_cards where id = :'card7'),
+                     'покупка не сдвигает график сгорания');
+
+-- резерв всех средств на момент сгорания их не спасает: точка сработает, когда резерв снимется
+select bonus_test.pay(:'u8', :'pl_card', :x2_amount) as p_card8 \gset
+select project.bonus_card_order(:'p_card8', 'X2') as card8 \gset
+select project.bonus_card_activate(:'card8', now() - interval '20 days');
+select bonus_test.pay(:'u8', :'pl_half', 1200000) as p8 \gset
+select discount_id as d8 from project.bonus_discount_apply(:'p8') \gset
+select bonus_test.ok((select balance_usd = 0 and next_burn_at is null from project.bonus_cards where id = :'card8'),
+                     'все $40 в резерве — сгорать нечему');
+-- «прошло два месяца»: дата накопления сдвинута назад, обе точки графика уже позади
+update project.bonus_cards set fully_accrued_at = fully_accrued_at - interval '2 months' where id = :'card8';
+select bonus_test.set_status(:'p8', 'ERROR');
+select count(*) as n from project.bonus_user_cards(:'u8') \gset
+select bonus_test.ok((select burn_count = 2 and balance_usd = 0 from project.bonus_cards where id = :'card8')
+                         and (select count(*) = 2 and sum(amount_usd) = -40 from project.bonus_card_ledger
+                              where card_id = :'card8' and op_type = 'BURN'),
+                     'резерв снят после двух точек сгорания — обе сработали задним числом');
+
+-- ---------------------------------------------------------------- 14. Ежедневные, нехватка фонда, отмена, ранняя фиксация
 select project.bonus_draw_create_daily('TOURIST', :'today'::date - 1, array [1, 0.5]) as daily1 \gset
 select bonus_test.ok(project.bonus_draw_create_daily('TOURIST', :'today'::date - 1) = :'daily1', 'ежедневный за день — один');
 select bonus_test.ok((select period_from = (:'today'::date - 1)::timestamp at time zone 'Asia/Tashkent'
@@ -445,7 +493,7 @@ select bonus_test.ok((select balance_usd from project.bonus_prize_fund_balance w
                      'отмена зафиксированного розыгрыша вернула призы в фонд');
 select bonus_test.raises(format('select project.bonus_draw_cancel(%L)', :'draw_t'), 'проведённый не отменить');
 
--- ---------------------------------------------------------------- 13. Журналы только для добавления, итоговая сверка
+-- ---------------------------------------------------------------- 15. Журналы только для добавления, итоговая сверка
 select bonus_test.raises($$update project.bonus_card_ledger set amount_usd = 1000 where op_type = 'ISSUE'$$, 'журнал карт не правится');
 select bonus_test.raises($$delete from project.bonus_prize_fund_ledger$$, 'журнал фонда не удаляется');
 select bonus_test.ok(not exists (select 1 from project.bonus_card_mismatches), 'итог: кеш остатков совпадает с журналом');

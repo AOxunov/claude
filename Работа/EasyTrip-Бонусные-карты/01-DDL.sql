@@ -133,8 +133,8 @@ create table project.bonus_card_types
     accrual_interval  interval       not null default '7 days',
     burn_usd          numeric(12, 2) not null check (burn_usd > 0),
     burn_interval     interval       not null default '1 month',
-    fund_tourist_rate numeric(6, 4)  not null default 0.05,
-    fund_object_rate  numeric(6, 4)  not null default 0.05,
+    fund_tourist_rate numeric(6, 4)  not null,
+    fund_object_rate  numeric(6, 4)  not null,
     is_on_sale        boolean        not null default true,
     sort_order        smallint,
     check (initial_usd >= 0 and initial_usd <= total_usd),
@@ -147,16 +147,17 @@ comment on column project.bonus_card_types.total_usd is 'Всего скидоч
 comment on column project.bonus_card_types.initial_usd is 'Начисляется сразу после оплаты, $';
 comment on column project.bonus_card_types.accrual_usd is 'Прибавка за каждый accrual_interval, пока не наберётся total_usd';
 comment on column project.bonus_card_types.burn_usd is 'Сгорает за раз после полного накопления (или весь остаток, если он меньше)';
-comment on column project.bonus_card_types.burn_interval is 'Сгорание — через этот срок после полного накопления, последней покупки или прошлого сгорания (что позже)';
-comment on column project.bonus_card_types.fund_tourist_rate is 'Доля потраченного и сгоревшего, которая идёт в призовой фонд туристов (0.05 = /10 и пополам)';
-comment on column project.bonus_card_types.fund_object_rate is 'Доля потраченного и сгоревшего, которая идёт в призовой фонд объектов';
+comment on column project.bonus_card_types.burn_interval is 'Сгорание — каждый такой срок от даты полного накопления, по графику; покупки его не сдвигают';
+comment on column project.bonus_card_types.fund_tourist_rate is 'Доля потраченного и сгоревшего в призовой фонд туристов: 1 / кратность / 2 (X2 — 0.25, X5 — 0.1, X10 — 0.05)';
+comment on column project.bonus_card_types.fund_object_rate is 'То же в призовой фонд объектов. Вместе две доли = 1 / кратность: за жизнь карты в фонды уходит вся её цена';
 
--- Схема из статьи: при покупке 1× номинала, дальше +1× в неделю до 2× / 5× / 10×
+-- Схема из статьи: при покупке 1× номинала, дальше +1× в неделю до 2× / 5× / 10×.
+-- В фонды — потраченное и сгоревшее, делённое на кратность, пополам туристам и объектам.
 insert into project.bonus_card_types (code, name_uz, name_ru, name_en, price_usd, total_usd, initial_usd,
-                                      accrual_usd, burn_usd, sort_order)
-values ('X2', 'X2 chegirma kartasi', 'Скидочная карта X2', 'X2 discount card', 20, 40, 20, 20, 20, 1),
-       ('X5', 'X5 chegirma kartasi', 'Скидочная карта X5', 'X5 discount card', 50, 250, 50, 50, 50, 2),
-       ('X10', 'X10 chegirma kartasi', 'Скидочная карта X10', 'X10 discount card', 100, 1000, 100, 100, 100, 3);
+                                      accrual_usd, burn_usd, fund_tourist_rate, fund_object_rate, sort_order)
+values ('X2', 'X2 chegirma kartasi', 'Скидочная карта X2', 'X2 discount card', 20, 40, 20, 20, 20, 0.25, 0.25, 1),
+       ('X5', 'X5 chegirma kartasi', 'Скидочная карта X5', 'X5 discount card', 50, 250, 50, 50, 50, 0.1, 0.1, 2),
+       ('X10', 'X10 chegirma kartasi', 'Скидочная карта X10', 'X10 discount card', 100, 1000, 100, 100, 100, 0.05, 0.05, 3);
 
 
 -- =====================================================================================
@@ -202,6 +203,7 @@ create table project.bonus_cards
     fully_accrued_at timestamptz,
     last_spent_at    timestamptz,
     last_burned_at   timestamptz,
+    burn_count       smallint       not null default 0,
     next_burn_at     timestamptz,
     next_event_at    timestamptz generated always as (least(next_accrual_at, next_burn_at)) stored,
     closed_at        timestamptz,
@@ -223,7 +225,9 @@ comment on column project.bonus_cards.payment_id is 'Платёж RealPay за �
 comment on column project.bonus_cards.pay_amount is 'Цена карты в сумах по курсу ЦБ на день покупки';
 comment on column project.bonus_cards.balance_usd is 'Доступный остаток, $ (кеш: сумма bonus_card_ledger по карте)';
 comment on column project.bonus_cards.accrued_usd is 'Всего начислено, $';
-comment on column project.bonus_cards.next_burn_at is 'Когда сгорит следующая часть, если турист ничего не купит';
+comment on column project.bonus_cards.last_spent_at is 'Когда средствами карты последний раз оплатили покупку (на сгорание не влияет)';
+comment on column project.bonus_cards.burn_count is 'Сколько раз уже сгорало: следующее сгорание = полное накопление + (burn_count + 1) × burn_interval';
+comment on column project.bonus_cards.next_burn_at is 'Следующее сгорание по графику от полного накопления; покупки его не сдвигают. NULL — не накоплено полностью или остаток 0';
 comment on column project.bonus_cards.next_event_at is 'Ближайшее начисление или сгорание — по нему cron выбирает карты';
 
 
@@ -257,6 +261,7 @@ create table project.bonus_discounts
     rate_date        date           not null,
     discount_usd     numeric(12, 2) not null check (discount_usd > 0),
     shortfall_usd    numeric(12, 2) not null default 0 check (shortfall_usd >= 0 and shortfall_usd <= discount_usd),
+    returned_usd     numeric(12, 2) check (returned_usd >= 0),
     reserved_at      timestamptz    not null default now(),
     confirmed_at     timestamptz,
     released_at      timestamptz,
@@ -270,7 +275,8 @@ create index bonus_discounts_confirmed_idx on project.bonus_discounts (confirmed
 create index bonus_discounts_reserved_idx on project.bonus_discounts (reserved_at) where status = 'RESERVED';
 
 comment on table project.bonus_discounts is 'Скидка по карте в оплате RealPay: одна строка на платёж. Средства резервируются при создании платежа, списание подтверждается оплатой';
-comment on column project.bonus_discounts.status is 'RESERVED — средства сняты с карт, ждём оплату; CONFIRMED — оплачено; RELEASED — оплата не прошла, средства вернулись; REFUNDED — оплату отменили, средства вернулись';
+comment on column project.bonus_discounts.status is 'RESERVED — средства сняты с карт, ждём оплату; CONFIRMED — оплачено; RELEASED — оплата не прошла, средства вернулись; REFUNDED — оплату отменили (средства вернулись, только если чек ещё не попал в розыгрыш)';
+comment on column project.bonus_discounts.returned_usd is 'Сколько вернулось на карты при RELEASED / REFUNDED; 0 у REFUNDED — отмена после розыгрыша, средства не вернулись';
 comment on column project.bonus_discounts.price_amount is 'Полная цена, сумы (то, что ввёл турист)';
 comment on column project.bonus_discounts.discount_percent is 'Скидка объекта на момент оплаты, %';
 comment on column project.bonus_discounts.max_discount_usd is 'Потолок скидки объекта за чек на момент оплаты, $';
@@ -574,12 +580,12 @@ select ((p_at at time zone 'Asia/Tashkent') + p_interval) at time zone 'Asia/Tas
 $$;
 
 
--- Следующее сгорание: через burn_interval после самого позднего из
--- (полное накопление, последняя покупка, прошлое сгорание). До полного накопления
--- и при нулевом остатке сгорания нет.
-create function project.bonus_next_burn(p_fully_accrued_at timestamptz, p_last_spent_at timestamptz,
-                                        p_last_burned_at timestamptz, p_balance_usd numeric,
-                                        p_burn_interval interval)
+-- Следующее сгорание по графику: полное накопление + 1, + 2, ... burn_interval.
+-- Покупки график не сдвигают. До полного накопления и при нулевом остатке сгорания нет.
+-- Точка, пропущенная из-за нулевого остатка, сработает задним числом, когда средства вернутся:
+-- зарезервировать всё неоплаченным платежом перед сгоранием и снять резерв после — не спасает.
+create function project.bonus_next_burn(p_fully_accrued_at timestamptz, p_burn_count integer,
+                                        p_balance_usd numeric, p_burn_interval interval)
     returns timestamptz
     language sql
     stable
@@ -587,8 +593,7 @@ as
 $$
 select case
            when p_fully_accrued_at is not null and p_balance_usd > 0
-               then project.bonus_add_interval(greatest(p_fully_accrued_at, p_last_spent_at, p_last_burned_at),
-                                               p_burn_interval)
+               then project.bonus_add_interval(p_fully_accrued_at, p_burn_interval * (p_burn_count + 1))
            end
 $$;
 
@@ -690,14 +695,14 @@ begin
             v_changed := true;
         end loop;
 
-    -- сгорания: номинал или весь остаток, если он меньше
+    -- сгорания по графику от полного накопления: номинал или весь остаток, если он меньше
     loop
-        v_burn_at := project.bonus_next_burn(c.fully_accrued_at, c.last_spent_at, c.last_burned_at,
-                                             c.balance_usd, c.burn_interval);
+        v_burn_at := project.bonus_next_burn(c.fully_accrued_at, c.burn_count, c.balance_usd, c.burn_interval);
         exit when v_burn_at is null or v_burn_at > p_until;
         v_amount := least(c.burn_usd, c.balance_usd);
         c.balance_usd := c.balance_usd - v_amount;
         c.last_burned_at := v_burn_at;
+        c.burn_count := c.burn_count + 1;
         insert into project.bonus_card_ledger (card_id, user_id, op_type, amount_usd, balance_after_usd, occurred_at)
         values (c.id, c.user_id, 'BURN', -v_amount, c.balance_usd, v_burn_at)
         returning id into v_ledger;
@@ -705,8 +710,7 @@ begin
         v_changed := true;
     end loop;
 
-    v_burn_at := project.bonus_next_burn(c.fully_accrued_at, c.last_spent_at, c.last_burned_at,
-                                         c.balance_usd, c.burn_interval);
+    v_burn_at := project.bonus_next_burn(c.fully_accrued_at, c.burn_count, c.balance_usd, c.burn_interval);
     if v_changed or v_burn_at is distinct from c.next_burn_at then
         update project.bonus_cards
         set accrued_usd      = c.accrued_usd,
@@ -714,6 +718,7 @@ begin
             next_accrual_at  = c.next_accrual_at,
             fully_accrued_at = c.fully_accrued_at,
             last_burned_at   = c.last_burned_at,
+            burn_count       = c.burn_count,
             next_burn_at     = v_burn_at,
             updated_at       = now()
         where id = c.id;
@@ -905,9 +910,10 @@ begin
                                when c.initial_usd < c.total_usd
                                    then project.bonus_add_interval(p_at, c.accrual_interval) end,
         fully_accrued_at = case when c.initial_usd >= c.total_usd then p_at end,
+        burn_count       = 0,
         next_burn_at     = case
                                when c.initial_usd >= c.total_usd
-                                   then project.bonus_next_burn(p_at, null, null, c.initial_usd, c.burn_interval) end,
+                                   then project.bonus_next_burn(p_at, 0, c.initial_usd, c.burn_interval) end,
         closed_at        = null,
         updated_at       = now()
     where id = p_card_id;
@@ -1018,8 +1024,7 @@ begin
             v_take := least(c.balance_usd, v_left);
             update project.bonus_cards
             set balance_usd  = balance_usd - v_take,
-                next_burn_at = project.bonus_next_burn(fully_accrued_at, last_spent_at, last_burned_at,
-                                                       balance_usd - v_take, burn_interval),
+                next_burn_at = project.bonus_next_burn(fully_accrued_at, burn_count, balance_usd - v_take, burn_interval),
                 updated_at   = now()
             where id = c.id;
             insert into project.bonus_card_ledger (card_id, user_id, op_type, amount_usd, balance_after_usd,
@@ -1053,8 +1058,7 @@ begin
         loop
             update project.bonus_cards
             set balance_usd  = balance_usd + r.net,
-                next_burn_at = project.bonus_next_burn(fully_accrued_at, last_spent_at, last_burned_at,
-                                                       balance_usd + r.net, burn_interval),
+                next_burn_at = project.bonus_next_burn(fully_accrued_at, burn_count, balance_usd + r.net, burn_interval),
                 updated_at   = now()
             where id = r.card_id
               and status = 'ACTIVE'
@@ -1217,13 +1221,15 @@ begin
         updated_at    = now()
     where id = d.id;
 
-    -- покупка — активность туриста: сгорание на всех его картах отсчитывается заново от неё
-    update project.bonus_cards
+    -- отметка «когда платили» на картах, с которых списано; график сгорания покупка не сдвигает
+    update project.bonus_cards c
     set last_spent_at = now(),
-        next_burn_at  = project.bonus_next_burn(fully_accrued_at, now(), last_burned_at, balance_usd, burn_interval),
         updated_at    = now()
-    where user_id = d.user_id
-      and status = 'ACTIVE';
+    where c.id in (select l.card_id
+                   from project.bonus_card_ledger l
+                   where l.discount_id = d.id
+                   group by l.card_id
+                   having sum(l.amount_usd) < 0);
 
     -- в призовые фонды — доли от того, что фактически списано с каждой карты
     for r in
@@ -1246,7 +1252,8 @@ create function project.bonus_discount_release(p_discount_id uuid, p_reason varc
 as
 $$
 declare
-    d project.bonus_discounts%rowtype;
+    d          project.bonus_discounts%rowtype;
+    v_returned numeric;
 begin
     select * into d from project.bonus_discounts where id = p_discount_id for update;
     if not found or d.status <> 'RESERVED' then
@@ -1254,27 +1261,32 @@ begin
     end if;
 
     perform project.bonus_lock_user_cards(d.user_id, false);
-    perform project.bonus_credit_back(d.id, 'RELEASE', p_reason);
+    v_returned := project.bonus_credit_back(d.id, 'RELEASE', p_reason);
 
     update project.bonus_discounts
-    set status      = 'RELEASED',
-        released_at = now(),
-        updated_at  = now()
+    set status       = 'RELEASED',
+        released_at  = now(),
+        returned_usd = v_returned,
+        updated_at   = now()
     where id = d.id;
 end;
 $$;
 
 
--- Оплату отменили (RealPay cancel): скидка возвращается на карты, взносы в фонды снимаются.
--- Шанс снимается сам: розыгрыш берёт только CONFIRMED. В уже зафиксированных розыгрышах
--- участники не пересчитываются.
+-- Оплату отменили (RealPay cancel). Шанс в будущих розыгрышах пропадает всегда: они берут
+-- только CONFIRMED.
+-- Чек ещё не попал в зафиксированный розыгрыш — скидка возвращается на карты, взносы в фонды
+-- снимаются.
+-- Уже попал (есть FROZEN или DONE розыгрыш, чей период накрывает чек) — средства не
+-- возвращаются и взносы остаются: иначе «оплата → розыгрыш → отмена» давала бы шансы даром.
 create function project.bonus_discount_refund(p_discount_id uuid)
     returns void
     language plpgsql
 as
 $$
 declare
-    d project.bonus_discounts%rowtype;
+    d          project.bonus_discounts%rowtype;
+    v_returned numeric := 0;
 begin
     select * into d from project.bonus_discounts where id = p_discount_id for update;
     if not found or d.status in ('REFUNDED', 'RELEASED') then
@@ -1285,20 +1297,29 @@ begin
         return;
     end if;
 
-    perform project.bonus_lock_user_cards(d.user_id, false);
-    perform project.bonus_credit_back(d.id, 'REFUND', 'возврат покупки');
+    -- та же блокировка, что у фиксации розыгрыша: возврат и фиксация не пересекаются
+    perform pg_advisory_xact_lock(hashtext('project.bonus_draw_freeze'));
+    if not exists (select 1
+                   from project.bonus_draws dr
+                   where dr.status in ('FROZEN', 'DONE')
+                     and d.confirmed_at >= dr.period_from
+                     and d.confirmed_at < dr.period_to) then
+        perform project.bonus_lock_user_cards(d.user_id, false);
+        v_returned := project.bonus_credit_back(d.id, 'REFUND', 'возврат покупки');
 
-    insert into project.bonus_prize_fund_ledger (fund, op_type, amount_usd, card_id, discount_id, occurred_at, comment)
-    select f.fund, 'REFUND', -f.amount_usd, f.card_id, f.discount_id, now(), 'возврат покупки'
-    from project.bonus_prize_fund_ledger f
-    where f.discount_id = d.id
-      and f.op_type = 'SPEND'
-    on conflict do nothing;
+        insert into project.bonus_prize_fund_ledger (fund, op_type, amount_usd, card_id, discount_id, occurred_at, comment)
+        select f.fund, 'REFUND', -f.amount_usd, f.card_id, f.discount_id, now(), 'возврат покупки'
+        from project.bonus_prize_fund_ledger f
+        where f.discount_id = d.id
+          and f.op_type = 'SPEND'
+        on conflict do nothing;
+    end if;
 
     update project.bonus_discounts
-    set status      = 'REFUNDED',
-        refunded_at = now(),
-        updated_at  = now()
+    set status       = 'REFUNDED',
+        refunded_at  = now(),
+        returned_usd = v_returned,
+        updated_at   = now()
     where id = d.id;
 end;
 $$;
@@ -1591,6 +1612,9 @@ begin
         if now() < d.period_to then
             raise exception 'Период розыгрыша ещё не закончился: до %', d.period_to;
         end if;
+
+        -- отмена оплаты ждёт конца фиксации, иначе чек мог бы и сыграть, и вернуть средства
+        perform pg_advisory_xact_lock(hashtext('project.bonus_draw_freeze'));
 
         if d.audience = 'TOURIST' then
             -- сгорания по графику до конца периода должны попасть в веса
