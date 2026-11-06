@@ -52,7 +52,8 @@ Basic проверяет платформа по своим пользовате
 | `attributes` | настройки стадии (JSON), набор ключей зависит от handler |
 | `serialize_result` | у всех `_body` — `true`; у стадий, чей результат подставляется в SQL как текст (`:alias`), тоже `true`. Точный смысл не описан |
 | `access_condition` | условие запуска стадии: `#slug == 'restaurants'`, `:place_type == "STORE"`, `:request.code === 0` |
-| `parent_id` | всегда 0 |
+| `parent_id` | всегда пусто (`NULL`) |
+| `state` | 1 — работает, 0 — стадия выключена (у `v1/stage/real-pay/token` так выключены прод-стадии) |
 
 | handler | Сколько | Ключи `attributes` |
 |---|---|---|
@@ -74,6 +75,24 @@ Basic проверяет платформа по своим пользовате
 - В SQL подстановка идёт параметром (`#amount::numeric`, `:merchant_creator::jsonb`), в URL и
   теле HTTP — текстом, поэтому строки берут в кавычки: `":student.client_id"`.
 
+**Тип результата `sql_select`** (`sql_result_type`):
+- `object` — одно значение, первая колонка первой строки: `select gen_random_uuid()`;
+- `map` — одна строка объектом: `select * from merchant where id = …`;
+- `list` — все строки.
+
+**Ответ HTTP-стадии в SQL.** При `serialize_result = true` ответ целиком подставляется как
+`:alias` — текстом JSON: `long02 = :template_creator` в `v1/stage/real-pay/create/template`.
+Поле ответа — `:alias.поле`: `:stage_agent_token.data.access_token::varchar`. Так сделан
+`v1/ti/currency/load` (бонусные карты, `P01`): `ti_currency_rates_load_cbu(:cbu::jsonb)`.
+
+**SQL-стадия, которая пишет.** В дампе нет `sql_select`, вызывающих функции с записью. Для
+`select project.ti_…()` ставлю `has_transaction = true` — первая проверка на сервере — `P01`.
+
+**Инсерты из DataGrip.** `:alias`, `#field` и `$user` внутри SQL стадий DataGrip может принять
+за свои параметры и открыть окно Parameters. В JSON стадии такой символ пишу
+escape-последовательностью: двоеточие — \u003a, `#` — \u0023, `$` — \u0024. Платформа
+читает JSON и видит обычный символ; кириллица в JS-стадиях RealPay хранится так же (\uXXXX).
+
 **JS-стадия.** Платформа хранит исходник и собранный ES5-вариант с обёрткой
 `return (function(){ … })();` — похоже, выполняется он. При вставке SQL-ом нужны оба поля:
 писать сразу на ES5 и класть в `es5` с обёрткой.
@@ -93,6 +112,13 @@ Basic проверяет платформа по своим пользовате
 - **Почему TokenUpdater падал с 401:** эндпоинт `v1/stage/real-pay/token` — `bearer`, а cron
   шлёт Basic. Эндпоинты для cron должны быть `basic` (или без авторизации).
 - **Колонка `sql`** (до 4000 символов) есть, но задач с `code_type` кроме REQUEST в дампе нет.
+- **Новые задачи** вставляю с отрицательными id: последовательности для cron в дампе нет.
+  Остальное — как у TokenUpdater: `log_level = 'ERROR'`, `attempt_count = 1`, заголовок
+  `Authorization` копируется из него запросом, значение в файл не попадает.
+
+**Последовательности** в дампе видны: `seq_api_endpoint` (139), `seq_api_stage` (401),
+`seq_update_id`. Строки, созданные платформой, получают `created_at`, `update_id` и
+`created_by`; у ручных — только `state` и `version`, и на проде они работают.
 
 ## env_group / env_item
 
