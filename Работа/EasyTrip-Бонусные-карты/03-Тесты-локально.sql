@@ -131,14 +131,14 @@ select ti_bonus_test.raises(format('select project.ti_bonus_card_order(%L, %L)',
 select ti_bonus_test.set_status(:'p_card1', 'IN_PROGRESS');
 select ti_bonus_test.ok((select status from project.ti_bonus_cards where id = :'card1') = 'PENDING', 'IN_PROGRESS ничего не меняет');
 select ti_bonus_test.set_status(:'p_card1', 'SUCCESS');
-select ti_bonus_test.ok((select status = 'ACTIVE' and balance_usd = 50 and accrued_usd = 50
+select ti_bonus_test.ok((select status = 'ACTIVE' and balance_usd = 100 and accrued_usd = 100
                              and length(card_number) = 16 and ti_bonus_test.luhn_ok(card_number)
                              and next_accrual_at = activated_at + interval '7 days'
                              and next_burn_at is null
                       from project.ti_bonus_cards where id = :'card1'),
-                     'оплата → карта активна, $50 сразу, номер 16 цифр по Луну, начисление через 7 дней');
-select ti_bonus_test.ok((select count(*) = 1 and sum(amount_usd) = 50 from project.ti_bonus_card_ledger
-                      where card_id = :'card1' and op_type = 'ISSUE'), 'в журнале ISSUE $50');
+                     'оплата → карта активна, $100 сразу, номер 16 цифр по Луну, начисление через 7 дней');
+select ti_bonus_test.ok((select count(*) = 1 and sum(amount_usd) = 100 from project.ti_bonus_card_ledger
+                      where card_id = :'card1' and op_type = 'ISSUE'), 'в журнале ISSUE $100');
 
 -- ---------------------------------------------------------------- 3. Начисления задним числом
 select pay_amount as x10_amount from project.ti_bonus_card_quote('X10') \gset
@@ -163,35 +163,37 @@ select pay_amount as x2_amount from project.ti_bonus_card_quote('X2') \gset
 select ti_bonus_test.pay(:'u3', :'pl_card', :x2_amount) as p_card3 \gset
 select project.ti_bonus_card_order(:'p_card3', 'X2') as card3 \gset
 select project.ti_bonus_card_activate(:'card3', now() - interval '100 days');
-select ti_bonus_test.ok((select balance_usd = 0 and accrued_usd = 40 and next_burn_at is null
+select ti_bonus_test.ok((select accrued_usd = 200 and balance_usd = 140 and burn_count = 3
+                             and fully_accrued_at = activated_at + interval '7 days'
+                             and next_burn_at = project.ti_bonus_add_interval(fully_accrued_at, interval '4 months')
                       from project.ti_bonus_cards where id = :'card3'),
-                     'X2 без покупок 100 дней: накоплено $40 и сгорело дважды по $20');
-select ti_bonus_test.ok((select count(*) = 2 and sum(amount_usd) = -40
+                     'X2 без покупок 100 дней: $100 + $100 за неделю = $200, сгорело трижды по $20, осталось $140');
+select ti_bonus_test.ok((select count(*) = 3 and sum(amount_usd) = -60
                              and min(occurred_at) = project.ti_bonus_add_interval(
                                  (select fully_accrued_at from project.ti_bonus_cards where id = :'card3'), interval '1 month')
                       from project.ti_bonus_card_ledger where card_id = :'card3' and op_type = 'BURN'),
                      'первое сгорание — через месяц после полного накопления');
-select ti_bonus_test.ok((select count(*) = 4 and sum(amount_usd) filter (where fund = 'TOURIST') = 10
-                             and sum(amount_usd) filter (where fund = 'OBJECT') = 10
+select ti_bonus_test.ok((select count(*) = 6 and sum(amount_usd) filter (where fund = 'TOURIST') = 3
+                             and sum(amount_usd) filter (where fund = 'OBJECT') = 3
                       from project.ti_bonus_prize_fund_ledger where card_id = :'card3' and op_type = 'BURN'),
-                     'сгоревшие $40 с X2: / 2 и пополам — по $10 в каждый фонд');
+                     'сгоревшие $60: / 10 и пополам — по $3 в каждый фонд');
 
 -- ---------------------------------------------------------------- 5. Скидка с одной карты
 select ti_bonus_test.pay(:'u1', :'pl_hotel', 1000000) as p1 \gset
 select discount_id as d1, discount_amount as d1_amount, discount_usd as d1_usd, pay_amount as d1_pay, balance_usd as d1_left
 from project.ti_bonus_discount_apply(:'p1') \gset
-select ti_bonus_test.ok(:d1_amount = 100000 and :d1_usd = 7.90 and :d1_pay = 900000 and :d1_left = 42.10,
-                     '1 000 000 сум, отель 10%: скидка 100 000 сум = $7.90, к оплате 900 000, осталось $42.10');
+select ti_bonus_test.ok(:d1_amount = 100000 and :d1_usd = 7.90 and :d1_pay = 900000 and :d1_left = 92.10,
+                     '1 000 000 сум, отель 10%: скидка 100 000 сум = $7.90, к оплате 900 000, осталось $92.10');
 select ti_bonus_test.ok((select amount from project.realpay_transaction where id = :'p1') = 900000,
                      'в realpay_transaction сумма со скидкой');
 select ti_bonus_test.ok((select discount_id from project.ti_bonus_discount_apply(:'p1')) = :'d1', 'повторный apply — та же скидка');
 select ti_bonus_test.set_status(:'p1', 'SUCCESS');
 select ti_bonus_test.ok((select status = 'CONFIRMED' and confirmed_at is not null from project.ti_bonus_discounts where id = :'d1'),
                      'оплата → скидка подтверждена');
-select ti_bonus_test.ok((select last_spent_at is not null and balance_usd = 42.10 from project.ti_bonus_cards where id = :'card1'),
+select ti_bonus_test.ok((select last_spent_at is not null and balance_usd = 92.10 from project.ti_bonus_cards where id = :'card1'),
                      'покупка отмечена на карте');
-select ti_bonus_test.ok((select count(*) = 2 and sum(amount_usd) = 1.58 from project.ti_bonus_prize_fund_ledger
-                      where discount_id = :'d1' and op_type = 'SPEND'), 'с X5 в фонды по $0.79 от $7.90 (/ 5 и пополам)');
+select ti_bonus_test.ok((select count(*) = 2 and sum(amount_usd) = 0.79 from project.ti_bonus_prize_fund_ledger
+                      where discount_id = :'d1' and op_type = 'SPEND'), 'в фонды по $0.395 от $7.90 (/ 10 и пополам)');
 
 select ti_bonus_test.pay(:'u1', :'pl_rej', 500000) as p_rej \gset
 select ti_bonus_test.ok((select discount_id is null and pay_amount = 500000 from project.ti_bonus_discount_apply(:'p_rej')),
@@ -209,34 +211,37 @@ select project.ti_bonus_card_activate(:'card4a', now() - interval '30 days');
 select ti_bonus_test.pay(:'u4', :'pl_card', :x5_amount) as p_card4b \gset
 select project.ti_bonus_card_order(:'p_card4b', 'X5') as card4b \gset
 select project.ti_bonus_card_activate(:'card4b', now() - interval '10 days');
-select ti_bonus_test.ok((select balance_usd from project.ti_bonus_cards where id = :'card4a') = 40
-                         and (select balance_usd from project.ti_bonus_cards where id = :'card4b') = 100,
-                     'у U4 две карты: X2 $40 (старая), X5 $100');
+select ti_bonus_test.ok((select balance_usd from project.ti_bonus_cards where id = :'card4a') = 200
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card4b') = 200,
+                     'у U4 две карты: X2 $200 (старая, накоплена), X5 $200 ($100 сразу + неделя)');
 
-select ti_bonus_test.pay(:'u4', :'pl_half', 2000000) as p2 \gset
+-- скидка больше остатка старой карты: списание с двух карт
+select ti_bonus_test.pay(:'u4', :'pl_hotel', 30000000) as p2 \gset
 select discount_id as d2, discount_amount as d2_amount, discount_usd as d2_usd from project.ti_bonus_discount_apply(:'p2') \gset
-select ti_bonus_test.ok(:d2_amount = 632521 and :d2_usd = 50.00, 'кафе 50% с потолком $50: скидка 632 521 сум = $50');
+select ti_bonus_test.ok(:d2_amount = 3000000 and :d2_usd = 237.15, '30 000 000 сум в отеле 10%: скидка 3 000 000 сум = $237.15');
 select ti_bonus_test.ok((select balance_usd from project.ti_bonus_cards where id = :'card4a') = 0
                          and (select next_burn_at from project.ti_bonus_cards where id = :'card4a') is null
-                         and (select balance_usd from project.ti_bonus_cards where id = :'card4b') = 90,
-                     'списано сначала со старой ($40 → 0), остаток со следующей ($100 → 90)');
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card4b') = 162.85,
+                     'списано сначала со старой ($200 → 0), остаток со следующей ($200 → 162.85)');
 select ti_bonus_test.set_status(:'p2', 'ERROR');
-select ti_bonus_test.ok((select status = 'RELEASED' and returned_usd = 50 from project.ti_bonus_discounts where id = :'d2')
-                         and (select balance_usd from project.ti_bonus_cards where id = :'card4a') = 40
+select ti_bonus_test.ok((select status = 'RELEASED' and returned_usd = 237.15 from project.ti_bonus_discounts where id = :'d2')
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card4a') = 200
                          and (select next_burn_at is not null from project.ti_bonus_cards where id = :'card4a')
-                         and (select balance_usd from project.ti_bonus_cards where id = :'card4b') = 100,
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card4b') = 200,
                      'оплата не прошла → средства вернулись на обе карты');
 select ti_bonus_test.ok(not exists (select 1 from project.ti_bonus_prize_fund_ledger where discount_id = :'d2'),
                      'без оплаты в фонды ничего не ушло');
 
-select ti_bonus_test.pay(:'u4', :'pl_half', 200000) as p3 \gset
-select discount_id as d3, discount_usd as d3_usd from project.ti_bonus_discount_apply(:'p3') \gset
-select ti_bonus_test.ok(:d3_usd = 7.90 and (select balance_usd from project.ti_bonus_cards where id = :'card4a') = 32.10,
-                     '200 000 сум в кафе: $7.90 со старой карты');
+-- потолок объекта за чек
+select ti_bonus_test.pay(:'u4', :'pl_half', 2000000) as p3 \gset
+select discount_id as d3, discount_amount as d3_amount, discount_usd as d3_usd from project.ti_bonus_discount_apply(:'p3') \gset
+select ti_bonus_test.ok(:d3_amount = 632521 and :d3_usd = 50.00
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card4a') = 150,
+                     'кафе 50% с потолком $50: скидка 632 521 сум = $50, со старой карты');
 select ti_bonus_test.set_status(:'p3', 'SUCCESS');
 select ti_bonus_test.set_status(:'p3', 'CANCELLED');
-select ti_bonus_test.ok((select status = 'REFUNDED' and returned_usd = 7.90 from project.ti_bonus_discounts where id = :'d3')
-                         and (select balance_usd from project.ti_bonus_cards where id = :'card4a') = 40,
+select ti_bonus_test.ok((select status = 'REFUNDED' and returned_usd = 50 from project.ti_bonus_discounts where id = :'d3')
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card4a') = 200,
                      'отмена оплаты до розыгрыша → скидка вернулась на карту');
 select ti_bonus_test.ok((select count(*) = 4 and sum(amount_usd) = 0 from project.ti_bonus_prize_fund_ledger
                       where discount_id = :'d3'), 'взносы в фонды сняты зеркально');
@@ -244,35 +249,35 @@ select ti_bonus_test.ok((select count(*) = 4 and sum(amount_usd) = 0 from projec
 -- ---------------------------------------------------------------- 7. Новый платёж снимает старый резерв; поздняя оплата
 select ti_bonus_test.pay(:'u1', :'pl_hotel', 500000) as pa \gset
 select discount_id as da from project.ti_bonus_discount_apply(:'pa') \gset
-select ti_bonus_test.ok((select balance_usd from project.ti_bonus_cards where id = :'card1') = 38.15, 'резерв $3.95');
+select ti_bonus_test.ok((select balance_usd from project.ti_bonus_cards where id = :'card1') = 88.15, 'резерв $3.95');
 select ti_bonus_test.pay(:'u1', :'pl_hotel', 300000) as pb \gset
 select discount_id as db from project.ti_bonus_discount_apply(:'pb') \gset
 select ti_bonus_test.ok((select status from project.ti_bonus_discounts where id = :'da') = 'RELEASED'
-                         and (select balance_usd from project.ti_bonus_cards where id = :'card1') = 39.73,
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card1') = 89.73,
                      'новый платёж туриста снял резерв прежнего неоплаченного');
 select ti_bonus_test.set_status(:'pa', 'SUCCESS');
 select ti_bonus_test.ok((select status = 'CONFIRMED' and shortfall_usd = 0 from project.ti_bonus_discounts where id = :'da')
-                         and (select balance_usd from project.ti_bonus_cards where id = :'card1') = 35.78,
+                         and (select balance_usd from project.ti_bonus_cards where id = :'card1') = 85.78,
                      'поздняя оплата снятого резерва: списано заново, недостачи нет');
 select ti_bonus_test.set_status(:'pb', 'SUCCESS');
 
 select ti_bonus_test.pay(:'u5', :'pl_card', :x2_amount) as p_card5 \gset
 select project.ti_bonus_card_order(:'p_card5', 'X2') as card5 \gset
 select ti_bonus_test.set_status(:'p_card5', 'SUCCESS');
-select ti_bonus_test.pay(:'u5', :'pl_half', 1000000) as pc \gset
-select discount_id as dc, discount_usd as dc_usd from project.ti_bonus_discount_apply(:'pc') \gset
-select ti_bonus_test.ok(:dc_usd = 20.00, 'скидка ограничена остатком $20');
-select ti_bonus_test.pay(:'u5', :'pl_half', 100000) as pd \gset
+select ti_bonus_test.pay(:'u5', :'pl_hotel', 15000000) as pc \gset
+select discount_id as dc, discount_amount as dc_amount, discount_usd as dc_usd from project.ti_bonus_discount_apply(:'pc') \gset
+select ti_bonus_test.ok(:dc_amount = 1265043 and :dc_usd = 100.00, 'скидка ограничена остатком $100 = 1 265 043 сум');
+select ti_bonus_test.pay(:'u5', :'pl_hotel', 1000000) as pd \gset
 select discount_id as dd from project.ti_bonus_discount_apply(:'pd') \gset
 select ti_bonus_test.set_status(:'pc', 'SUCCESS');
-select ti_bonus_test.ok((select status = 'CONFIRMED' and shortfall_usd = 3.95 from project.ti_bonus_discounts where id = :'dc')
+select ti_bonus_test.ok((select status = 'CONFIRMED' and shortfall_usd = 7.90 from project.ti_bonus_discounts where id = :'dc')
                          and (select balance_usd from project.ti_bonus_cards where id = :'card5') = 0,
-                     'поздняя оплата, денег уже не хватает: недостача $3.95 записана, карта в ноль');
+                     'поздняя оплата, денег уже не хватает: недостача $7.90 записана, карта в ноль');
 select ti_bonus_test.set_status(:'pd', 'SUCCESS');
 
 -- ---------------------------------------------------------------- 8. ti_bonus_sync: триггер выключен, резерв истёк, сбой триггера
 alter table project.realpay_transaction disable trigger ti_trg_bonus_payment_status;
-select ti_bonus_test.pay(:'u4', :'pl_hotel', 100000) as p4 \gset
+select ti_bonus_test.pay(:'u4', :'pl_half', 100000) as p4 \gset
 select discount_id as d4 from project.ti_bonus_discount_apply(:'p4') \gset
 select ti_bonus_test.set_status(:'p4', 'SUCCESS');
 alter table project.realpay_transaction enable trigger ti_trg_bonus_payment_status;
@@ -280,7 +285,7 @@ select ti_bonus_test.ok((select status from project.ti_bonus_discounts where id 
 select project.ti_bonus_sync() as sync1 \gset
 select ti_bonus_test.ok((select status from project.ti_bonus_discounts where id = :'d4') = 'CONFIRMED', 'ti_bonus_sync подтвердил');
 
-select ti_bonus_test.pay(:'u4', :'pl_hotel', 100000) as p5 \gset
+select ti_bonus_test.pay(:'u4', :'pl_half', 100000) as p5 \gset
 select discount_id as d5 from project.ti_bonus_discount_apply(:'p5') \gset
 update project.ti_bonus_discounts set reserved_at = now() - interval '1 hour' where id = :'d5';
 select project.ti_bonus_sync() as sync2 \gset
@@ -295,7 +300,7 @@ begin
     raise exception 'тестовый сбой';
 end;
 $$;
-select ti_bonus_test.pay(:'u4', :'pl_hotel', 100000) as p6 \gset
+select ti_bonus_test.pay(:'u4', :'pl_half', 100000) as p6 \gset
 select discount_id as d6 from project.ti_bonus_discount_apply(:'p6') \gset
 select ti_bonus_test.set_status(:'p6', 'SUCCESS');
 select ti_bonus_test.ok((select status from project.realpay_transaction where id = :'p6') = 'SUCCESS'
@@ -317,7 +322,7 @@ select project.ti_bonus_card_order(:'p_card6', 'X2') as card6 \gset
 select ti_bonus_test.set_status(:'p_card6', 'SUCCESS');
 select ti_bonus_test.set_status(:'p_card6', 'CANCELLED');
 select ti_bonus_test.ok((select status = 'REVOKED' and balance_usd = 0 from project.ti_bonus_cards where id = :'card6')
-                         and (select sum(amount_usd) = -20 from project.ti_bonus_card_ledger where card_id = :'card6' and op_type = 'REVOKE'),
+                         and (select sum(amount_usd) = -100 from project.ti_bonus_card_ledger where card_id = :'card6' and op_type = 'REVOKE'),
                      'платёж за карту отменён → карта отозвана, остаток списан');
 
 select ti_bonus_test.ok((select count(*) = 2 from project.ti_bonus_user_cards(:'u4')), 'ti_bonus_user_cards: у U4 две карты');
@@ -332,9 +337,9 @@ select ti_bonus_test.ok((select array_agg(discount_percent || '/' || coalesce(ma
                      'история скидки: 10% → 15% → потолок $30, повтор без изменений не пишется');
 
 -- ---------------------------------------------------------------- 10. Розыгрыш туристов
-select ti_bonus_test.ok((select collected_usd from project.ti_bonus_prize_fund_balance where fund = 'TOURIST') = 16.817
-                         and (select collected_usd from project.ti_bonus_prize_fund_balance where fund = 'OBJECT') = 16.817,
-                     'в фонды собрано по $16.817: с X5 потрачено $14.22 / 5, с X2 потрачено $21.58 и сгорело $40 / 2, пополам');
+select ti_bonus_test.ok((select collected_usd from project.ti_bonus_prize_fund_balance where fund = 'TOURIST') = 9.106
+                         and (select collected_usd from project.ti_bonus_prize_fund_balance where fund = 'OBJECT') = 9.106,
+                     'в фонды собрано по $9.106: (потрачено $122.12 + сгорело $60) / 10, пополам');
 insert into project.ti_bonus_prize_fund_ledger (fund, op_type, amount_usd, occurred_at, comment)
 values ('TOURIST', 'ADJUST', 100, now(), 'тест: пополнение'),
        ('OBJECT', 'ADJUST', 100, now(), 'тест: пополнение');
@@ -344,12 +349,12 @@ select ti_bonus_test.raises(format('select * from project.ti_bonus_draw_run(%L, 
 select entries_hash as draw_t_hash, random_request as draw_t_req from project.ti_bonus_draw_freeze(:'draw_t') \gset
 select ti_bonus_test.ok((select array_agg(user_id::text || '=' || weight_cents order by entry_no) from project.ti_bonus_draw_entries
                       where draw_id = :'draw_t')
-                         = array [:'u3' || '=4000', :'u1' || '=1422', :'u5' || '=2000', :'u4' || '=158'],
-                     'участники по порядку первого события: U3 сгорело $40, U1 $14.22, U5 $20 (с недостачей), U4 $1.58 (возврат не считается)');
+                         = array [:'u3' || '=6000', :'u1' || '=1422', :'u5' || '=10000', :'u4' || '=790'],
+                     'участники по порядку первого события: U3 сгорело $60, U1 $14.22, U5 $100 (с недостачей), U4 $7.90 (возврат не считается)');
 select ti_bonus_test.ok((select bool_and(range_to - range_from + 1 = weight_cents)
-                             and min(range_from) = 1 and max(range_to) = 7580
-                      from project.ti_bonus_draw_entries where draw_id = :'draw_t'), 'диапазоны билетов подряд 1..7580');
-select ti_bonus_test.ok((select status = 'FROZEN' and prizes_count = 3 and prize_total_usd = 10 and total_weight_cents = 7580
+                             and min(range_from) = 1 and max(range_to) = 18212
+                      from project.ti_bonus_draw_entries where draw_id = :'draw_t'), 'диапазоны билетов подряд 1..18212');
+select ti_bonus_test.ok((select status = 'FROZEN' and prizes_count = 3 and prize_total_usd = 10 and total_weight_cents = 18212
                       from project.ti_bonus_draws where id = :'draw_t'), 'зафиксирован, 3 места на $10');
 select ti_bonus_test.ok((select sum(amount_usd) = -10 from project.ti_bonus_prize_fund_ledger where draw_id = :'draw_t'),
                      'призы списаны из фонда до random.org');
@@ -368,21 +373,21 @@ from project.ti_bonus_draw_run(:'draw_t', jsonb_build_object('jsonrpc', '2.0', '
                            'serialNumber', 1), 'signature', 'тест'), 'id', 1)::text) t \gset
 select ti_bonus_test.ok((select array_agg(user_id::text || '=' || amount_usd || '#' || ticket order by round_no)
                       from project.ti_bonus_draw_winners where draw_id = :'draw_t')
-                         = array [:'u3' || '=5.00#3791', :'u1' || '=3.00#896', :'u4' || '=2.00#2156'],
-                     'победители: билет 3791 из 7580 → U3; 896 из 3580 → U1; 2156 из 2158 → U4');
+                         = array [:'u5' || '=5.00#9107', :'u3' || '=3.00#2054', :'u4' || '=2.00#2210'],
+                     'победители: билет 9107 из 18212 → U5; 2054 из 8212 → U3; 2210 из 2212 → U4');
 select ti_bonus_test.ok((select count(*) = 3 from project.ti_bonus_draw_run(:'draw_t', null)), 'повторный run отдаёт тех же');
 
 -- ---------------------------------------------------------------- 11. Розыгрыш объектов, цепочка
 select project.ti_bonus_draw_create('OBJECT', now() - interval '120 days', now(), array [4], 'Тест объекты') as draw_o \gset
 select entries_hash as draw_o_hash from project.ti_bonus_draw_freeze(:'draw_o') \gset
 select ti_bonus_test.ok((select array_agg(place_id::text || '=' || weight_cents order by entry_no) from project.ti_bonus_draw_entries
-                      where draw_id = :'draw_o') = array [:'pl_hotel' || '=1580', :'pl_half' || '=2000'],
-                     'объекты: отель $15.80, кафе $20 — выданные скидки');
+                      where draw_id = :'draw_o') = array [:'pl_hotel' || '=11422', :'pl_half' || '=790'],
+                     'объекты: отель $114.22, кафе $7.90 — выданные скидки');
 select count(*) as n from project.ti_bonus_draw_run(:'draw_o', jsonb_build_object('result', jsonb_build_object('random',
-        jsonb_build_object('data', jsonb_build_array(0.6),
+        jsonb_build_object('data', jsonb_build_array(0.95),
                            'userData', jsonb_build_object('draw_id', :'draw_o', 'entries_hash', :'draw_o_hash'))))::text) \gset
-select ti_bonus_test.ok((select place_id from project.ti_bonus_draw_winners where draw_id = :'draw_o') = :'pl_half',
-                     'билет 2149 из 3580 → кафе');
+select ti_bonus_test.ok((select place_id = :'pl_half' and ticket = 11602 from project.ti_bonus_draw_winners where draw_id = :'draw_o'),
+                     'билет 11602 из 12212 → кафе: и маленький вес может выиграть');
 select ti_bonus_test.ok((select prev_hash from project.ti_bonus_draws where id = :'draw_o')
                          = (select hash from project.ti_bonus_draws where id = :'draw_t'), 'prev_hash ссылается на прошлый розыгрыш');
 
@@ -408,10 +413,10 @@ select ti_bonus_test.ok((select not hash_ok and chain_ok from project.ti_bonus_d
 update project.ti_bonus_draw_winners set amount_usd = 5 where draw_id = :'draw_t' and round_no = 1;
 alter table project.ti_bonus_draw_winners enable trigger ti_trg_bonus_draw_winners_guard;
 alter table project.ti_bonus_draw_entries disable trigger ti_trg_bonus_draw_entries_append_only;
-update project.ti_bonus_draw_entries set weight_cents = 4001, range_to = 4001 where draw_id = :'draw_t' and entry_no = 1;
+update project.ti_bonus_draw_entries set weight_cents = 6001, range_to = 6001 where draw_id = :'draw_t' and entry_no = 1;
 select ti_bonus_test.ok((select not entries_ok from project.ti_bonus_draw_chain_check() where draw_id = :'draw_t'),
                      'подмена веса участника — хеш участников не сходится');
-update project.ti_bonus_draw_entries set weight_cents = 4000, range_to = 4000 where draw_id = :'draw_t' and entry_no = 1;
+update project.ti_bonus_draw_entries set weight_cents = 6000, range_to = 6000 where draw_id = :'draw_t' and entry_no = 1;
 alter table project.ti_bonus_draw_entries enable trigger ti_trg_bonus_draw_entries_append_only;
 select ti_bonus_test.ok((select bool_and(hash_ok and chain_ok and entries_ok) from project.ti_bonus_draw_chain_check()),
                      'после возврата значений цепочка снова сходится');
@@ -436,11 +441,11 @@ select ti_bonus_test.ok((select status = 'REFUNDED' and returned_usd = 0 from pr
 select ti_bonus_test.pay(:'u7', :'pl_card', :x2_amount) as p_card7 \gset
 select project.ti_bonus_card_order(:'p_card7', 'X2') as card7 \gset
 select project.ti_bonus_card_activate(:'card7', now() - interval '50 days');
-select ti_bonus_test.ok((select burn_count = 1 and balance_usd = 20
+select ti_bonus_test.ok((select burn_count = 1 and balance_usd = 180
                              and last_burned_at = project.ti_bonus_add_interval(fully_accrued_at, interval '1 month')
                              and next_burn_at = project.ti_bonus_add_interval(fully_accrued_at, interval '2 months')
                       from project.ti_bonus_cards where id = :'card7'),
-                     'X2 за 50 дней: накоплена на 7-й день, через месяц сгорело $20, следующее — через 2 месяца от накопления');
+                     'X2 за 50 дней: $200 на 7-й день, через месяц сгорело $20, следующее — через 2 месяца от накопления');
 select next_burn_at as card7_next from project.ti_bonus_cards where id = :'card7' \gset
 select ti_bonus_test.pay(:'u7', :'pl_hotel', 100000) as p7 \gset
 select discount_id as d7 from project.ti_bonus_discount_apply(:'p7') \gset
@@ -453,15 +458,17 @@ select ti_bonus_test.ok((select next_burn_at = :'card7_next'::timestamptz and la
 select ti_bonus_test.pay(:'u8', :'pl_card', :x2_amount) as p_card8 \gset
 select project.ti_bonus_card_order(:'p_card8', 'X2') as card8 \gset
 select project.ti_bonus_card_activate(:'card8', now() - interval '20 days');
-select ti_bonus_test.pay(:'u8', :'pl_half', 1200000) as p8 \gset
-select discount_id as d8 from project.ti_bonus_discount_apply(:'p8') \gset
-select ti_bonus_test.ok((select balance_usd = 0 and next_burn_at is null from project.ti_bonus_cards where id = :'card8'),
-                     'все $40 в резерве — сгорать нечему');
+-- без потолка, чтобы одной оплатой зарезервировать все $200
+update project.places set card_discount_max_usd = null where id = :'pl_half';
+select ti_bonus_test.pay(:'u8', :'pl_half', 6000000) as p8 \gset
+select discount_id as d8, discount_usd as d8_usd from project.ti_bonus_discount_apply(:'p8') \gset
+select ti_bonus_test.ok(:d8_usd = 200.00 and (select balance_usd = 0 and next_burn_at is null from project.ti_bonus_cards where id = :'card8'),
+                     'все $200 в резерве — сгорать нечему');
 -- «прошло два месяца»: дата накопления сдвинута назад, обе точки графика уже позади
 update project.ti_bonus_cards set fully_accrued_at = fully_accrued_at - interval '2 months' where id = :'card8';
 select ti_bonus_test.set_status(:'p8', 'ERROR');
 select count(*) as n from project.ti_bonus_user_cards(:'u8') \gset
-select ti_bonus_test.ok((select burn_count = 2 and balance_usd = 0 from project.ti_bonus_cards where id = :'card8')
+select ti_bonus_test.ok((select burn_count = 2 and balance_usd = 160 from project.ti_bonus_cards where id = :'card8')
                          and (select count(*) = 2 and sum(amount_usd) = -40 from project.ti_bonus_card_ledger
                               where card_id = :'card8' and op_type = 'BURN'),
                      'резерв снят после двух точек сгорания — обе сработали задним числом');

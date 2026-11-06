@@ -156,15 +156,16 @@ comment on column project.ti_bonus_card_types.initial_usd is 'Начисляет
 comment on column project.ti_bonus_card_types.accrual_usd is 'Прибавка за каждый accrual_interval, пока не наберётся total_usd';
 comment on column project.ti_bonus_card_types.burn_usd is 'Сгорает за раз после полного накопления (или весь остаток, если он меньше)';
 comment on column project.ti_bonus_card_types.burn_interval is 'Сгорание — каждый такой срок от даты полного накопления, по графику; покупки его не сдвигают';
-comment on column project.ti_bonus_card_types.fund_tourist_rate is 'Доля потраченного и сгоревшего в призовой фонд туристов: 1 / кратность / 2 (X2 — 0.25, X5 — 0.1, X10 — 0.05)';
-comment on column project.ti_bonus_card_types.fund_object_rate is 'То же в призовой фонд объектов. Вместе две доли = 1 / кратность: за жизнь карты в фонды уходит вся её цена';
+comment on column project.ti_bonus_card_types.fund_tourist_rate is 'Доля потраченного и сгоревшего в призовой фонд туристов: цена / всего / 2 (у X2, X5, X10 — 0.05)';
+comment on column project.ti_bonus_card_types.fund_object_rate is 'То же в призовой фонд объектов. Вместе две доли = цена / всего: за жизнь карты в фонды уходит вся её цена';
 
--- Схема из статьи: при покупке 1× номинала, дальше +1× в неделю до 2× / 5× / 10×.
--- В фонды — потраченное и сгоревшее, делённое на кратность, пополам туристам и объектам.
+-- 2x / 5x / 10x копят $200 / $500 / $1000: сразу после оплаты $100, дальше +$100 каждые 7 дней
+-- (2x — за 1 неделю, 5x — за 4, 10x — за 9). Сгорает в месяц номинал: $20 / $50 / $100.
+-- В фонды — потраченное и сгоревшее / 10, пополам туристам и объектам.
 insert into project.ti_bonus_card_types (code, name_uz, name_ru, name_en, price_usd, total_usd, initial_usd,
                                       accrual_usd, burn_usd, fund_tourist_rate, fund_object_rate, sort_order)
-values ('X2', 'X2 chegirma kartasi', 'Скидочная карта X2', 'X2 discount card', 20, 40, 20, 20, 20, 0.25, 0.25, 1),
-       ('X5', 'X5 chegirma kartasi', 'Скидочная карта X5', 'X5 discount card', 50, 250, 50, 50, 50, 0.1, 0.1, 2),
+values ('X2', 'X2 chegirma kartasi', 'Скидочная карта X2', 'X2 discount card', 20, 200, 100, 100, 20, 0.05, 0.05, 1),
+       ('X5', 'X5 chegirma kartasi', 'Скидочная карта X5', 'X5 discount card', 50, 500, 100, 100, 50, 0.05, 0.05, 2),
        ('X10', 'X10 chegirma kartasi', 'Скидочная карта X10', 'X10 discount card', 100, 1000, 100, 100, 100, 0.05, 0.05, 3);
 
 
