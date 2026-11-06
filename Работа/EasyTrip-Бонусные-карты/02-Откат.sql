@@ -1,6 +1,7 @@
 -- =====================================================================================
--- Откат 01-DDL.sql: удаляет всё, что он создал, вместе с данными карт, скидок и розыгрышей.
--- В places пропадёт колонка card_discount_max_usd (потолки скидок объектов).
+-- Откат 01-DDL.sql и миграции 07: удаляет всё, что они создали, вместе с данными карт, скидок
+-- и розыгрышей. В places пропадёт колонка card_discount_max_usd (потолки скидок объектов).
+-- Только для локальной копии: на сервере откат с переустановкой не делать.
 -- Запуск: psql -v ON_ERROR_STOP=1 -d microservice -f 02-Откат.sql
 -- =====================================================================================
 
@@ -30,7 +31,9 @@ drop table if exists
     project.ti_bonus_card_types,
     project.ti_bonus_place_discount_history,
     project.ti_bonus_errors,
-    project.ti_currency_rates;
+    project.ti_currency_rates,
+    project.ti_bonus_settings,
+    project.ti_bonus_admins;
 
 -- остальные функции ti_bonus_* и ti_currency_rate* в схеме project (их триггеры ушли вместе с таблицами)
 do

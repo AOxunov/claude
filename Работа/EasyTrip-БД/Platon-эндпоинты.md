@@ -24,6 +24,9 @@ date: 2026-11-05
 - **Порядок.** Стадии выполняются по `sort_order`. Стадия с alias `_body` формирует ответ.
 - **Адрес.** Снаружи — `https://easy-trip.com/endpoint/api/<path>`; cron вызывает
   `http://gateway/endpoint/api/<path>`. В `path` нет ведущего `/`.
+- **Ролей нет.** `bearer` пускает любого пользователя с токеном. `PUT v1/moderation/place`
+  ничего не проверяет. Права проверяют в самом SQL (бонусная админка — таблица
+  `ti_bonus_admins`, см. `07-Розыгрыши-cron-и-админка.sql`).
 
 ## api_endpoints
 
@@ -51,7 +54,7 @@ Basic проверяет платформа по своим пользовате
 | `handler` | тип стадии, ниже |
 | `attributes` | настройки стадии (JSON), набор ключей зависит от handler |
 | `serialize_result` | у всех `_body` — `true`; у стадий, чей результат подставляется в SQL как текст (`:alias`), тоже `true`. Точный смысл не описан |
-| `access_condition` | условие запуска стадии: `#slug == 'restaurants'`, `:place_type == "STORE"`, `:request.code === 0` |
+| `access_condition` | условие запуска стадии (ложно — стадия пропускается): `#slug == 'restaurants'`, `:place_type == "STORE"`, `:request.code === 0`. Работают в `v1/places` и `v1/total-places`; в `P02` — `:prep.need_random` |
 | `parent_id` | всегда пусто (`NULL`) |
 | `state` | 1 — работает, 0 — стадия выключена (у `v1/stage/real-pay/token` так выключены прод-стадии) |
 
@@ -64,7 +67,7 @@ Basic проверяет платформа по своим пользовате
 | `http_request_handler` | 24 | `http_method`, `resource_url`, `content_type`, `http_headers`, `request_body`, `http_request_response` (строка `"false"`), `request_form_data` |
 | `sql_update` | 17 | `datasource`, `sql`, `returning_fields` |
 | `static_json` | 14 | `static_json` |
-| `validation_handler` | 2 | `condition`, `error_message1..4`: при истинном условии — ошибка с этим текстом |
+| `validation_handler` | 2 | `condition`, `error_message1..4`: при истинном условии — ошибка с этим текстом. В `v1/user/verification`: `"condition": "!:sms_info.is_matched"`, `"error_message1": "CODE_NOT_EQUAL"` — boolean из SQL-стадии берётся как есть |
 | `sql_batch_update` | 1 | `datasource`, `sql`, `batch_data_source` |
 
 **Подстановки.**
@@ -73,12 +76,26 @@ Basic проверяет платформа по своим пользовате
 - `$user.id` — текущий пользователь (bearer).
 - `@field` — элемент массива в bulk.
 - В SQL подстановка идёт параметром (`#amount::numeric`, `:merchant_creator::jsonb`), в URL и
-  теле HTTP — текстом, поэтому строки берут в кавычки: `":student.client_id"`.
+  теле HTTP — текстом, поэтому строки берут в кавычки: `":student.client_id"`, а числа — без
+  кавычек: `"amount": :student.amount` (`v1/stage/real-pay/create/iframe-token`).
+- **Тело HTTP целиком из прошлой стадии:** `request_body` = `:body` или `:data`, где `body` —
+  стадия `static_json` (JSON-шаблон, подстановки внутри тоже работают).
+- **`$user`** — поля `id`, `username`, `extraData` (в SQL встречаются только они).
+- **Массив из тела запроса** приходит JSON-текстом: `#cuisine_types::jsonb` (`v1/places`).
+- **Нет параметра — `null`:** `coalesce(#limit::int, 20)`, `#country_id is null`,
+  `nullif(#place_type::text, '')`.
 
 **Тип результата `sql_select`** (`sql_result_type`):
 - `object` — одно значение, первая колонка первой строки: `select gen_random_uuid()`;
 - `map` — одна строка объектом: `select * from merchant where id = …`;
 - `list` — все строки.
+
+**json/jsonb из SQL — не вложенный JSON.** Значение приходит объектом с текстом в `.value`.
+Поэтому ответ со вложенными данными собирают так (`GET v1/hotels`, `v1/place/detail`):
+- SQL-стадия `object` отдаёт `jsonb_build_object(...)`;
+- JS-стадия `_body` делает `return JSON.parse(variables.hotel.value)`.
+
+Колонки-числа, строки и boolean в `map` и `list` приходят как есть.
 
 **Ответ HTTP-стадии в SQL.** При `serialize_result = true` ответ целиком подставляется как
 `:alias` — текстом JSON: `long02 = :template_creator` в `v1/stage/real-pay/create/template`.
@@ -92,6 +109,14 @@ Basic проверяет платформа по своим пользовате
 за свои параметры и открыть окно Parameters. В JSON стадии такой символ пишу
 escape-последовательностью: двоеточие — \u003a, `#` — \u0023, `$` — \u0024. Платформа
 читает JSON и видит обычный символ; кириллица в JS-стадиях RealPay хранится так же (\uXXXX).
+
+- `access_condition` — не JSON, escape там не раскодируется. Двоеточие собираю в инсерте:
+  `chr(58) || 'prep.need_random'`.
+- Колонка `attributes` типа `json` хранит текст как есть: `attributes::text` покажет escape,
+  а `attributes ->> 'sql'` — уже обычный символ. Проверять стадии — через `->>`.
+- Escape-ы руками не пишу: их ставит генератор
+  [[EasyTrip-Бонусные-карты/tools/gen_p02.py|gen_p02.py]]. Проверяю эмулятором
+  `tools/emu.py` на локальных копиях: он читает стадии из platon и выполняет их, как платформа.
 
 **JS-стадия.** Платформа хранит исходник и собранный ES5-вариант с обёрткой
 `return (function(){ … })();` — похоже, выполняется он. При вставке SQL-ом нужны оба поля:
@@ -115,6 +140,9 @@ escape-последовательностью: двоеточие — \u003a, `#
 - **Новые задачи** вставляю с отрицательными id: последовательности для cron в дампе нет.
   Остальное — как у TokenUpdater: `log_level = 'ERROR'`, `attempt_count = 1`, заголовок
   `Authorization` копируется из него запросом, значение в файл не попадает.
+- **Задачи бонусных карт:** `TiCurrencyLoad` (`15 */3 * * *`) и `TiBonusSync` (`*/10 * * * *`)
+  — `P01`; `TiBonusDrawsDaily` (`5,15,25,35,45,55 * * * *`) — `P02`. Минуты сдвинуты, чтобы
+  розыгрыши не совпадали с `TiBonusSync`.
 
 **Последовательности** в дампе видны: `seq_api_endpoint` (139), `seq_api_stage` (401),
 `seq_update_id`. Строки, созданные платформой, получают `created_at`, `update_id` и
