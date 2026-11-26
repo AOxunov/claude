@@ -1,0 +1,376 @@
+{
+  "info": {
+    "name": "easy-trip — доставка Uzum Tezkor",
+    "description": "Проверка доставки Uzum на сервере easy-trip; порядок и ожидаемые ответы — 00-Обзор.md, «Проверка на сервере». Перед запуском в переменных коллекции вписать et_token (свой токен easy-trip — только в Current value, чтобы он не попал в экспорт) и place_id (объект тестовой точки из блока 3 шаблона 03). Генерирует tools/gen_postman.py.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{et_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base",
+      "value": "https://easy-trip.com/endpoint/api"
+    },
+    {
+      "key": "et_token",
+      "value": ""
+    },
+    {
+      "key": "place_id",
+      "value": ""
+    },
+    {
+      "key": "delivery_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 me — свой user_id",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base}}/v1/uzum/me",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "me"
+          ]
+        },
+        "description": "Свой user_id — его вписать в блок 1 шаблона 03 (администратор доставки). После блока 1 is_admin = true."
+      }
+    },
+    {
+      "name": "02 diag — проверка платформы",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base}}/v1/uzum/diag",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "diag"
+          ],
+          "query": [
+            {
+              "key": "place_id",
+              "value": "{{place_id}}",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "Только администратору. Ждём info404_code = not_found и calc_string_ok = true; что делать при другом ответе — шаг 5 в 00-Обзор.md."
+      }
+    },
+    {
+      "name": "03 points — подключённые точки",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base}}/v1/uzum/points",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "points"
+          ],
+          "query": [
+            {
+              "key": "place_id",
+              "value": "{{place_id}}",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "Точки забора без токенов. Должна быть тестовая точка из блока 3 шаблона 03 (env = test)."
+      }
+    },
+    {
+      "name": "04 calculate — цена",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"place_id\": \"{{place_id}}\",\n  \"lon\": 69.21686,\n  \"lat\": 41.3174,\n  \"address\": \"Ташкент, тестовый адрес\",\n  \"taxi_class\": \"courier\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base}}/v1/uzum/calculate",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "calculate"
+          ]
+        },
+        "description": "Цена доставки от точки до адреса, ничего не создаёт. Ждём ok = true и price."
+      }
+    },
+    {
+      "name": "05 claim/create — черновик",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"place_id\": \"{{place_id}}\",\n  \"order_ref\": \"TEST-{{$timestamp}}\",\n  \"recipient_name\": \"Тест easy-trip\",\n  \"recipient_phone\": \"+998000000002\",\n  \"address\": \"Ташкент, тестовый адрес\",\n  \"lon\": 69.21686,\n  \"lat\": 41.3174,\n  \"comment\": \"Тестовая доставка easy-trip\",\n  \"items\": [\n    {\n      \"title\": \"Тестовый заказ\",\n      \"quantity\": 1,\n      \"price\": 10000,\n      \"weight\": 0.5\n    }\n  ],\n  \"taxi_class\": \"courier\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base}}/v1/uzum/claim/create",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "claim",
+            "create"
+          ]
+        },
+        "description": "Черновик с ценой: stage = draft, курьера не ищет до accept. id доставки сохраняется в переменную delivery_id. order_ref каждый раз новый ({{$timestamp}})."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// id доставки -> переменная delivery_id для следующих запросов",
+              "const j = pm.response.json();",
+              "const d = j && j.data !== undefined ? j.data : j;",
+              "const row = Array.isArray(d) ? d[0] : d;",
+              "if (row && row.id) {",
+              "    pm.collectionVariables.set(\"delivery_id\", row.id);",
+              "    console.log(\"delivery_id = \" + row.id);",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 claim/info — статус",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base}}/v1/uzum/claim/info?id={{delivery_id}}",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "claim",
+            "info"
+          ],
+          "query": [
+            {
+              "key": "id",
+              "value": "{{delivery_id}}"
+            }
+          ]
+        },
+        "description": "Доставка со свежим статусом из Uzum."
+      }
+    },
+    {
+      "name": "07 claim/cancel — отмена",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"{{delivery_id}}\",\n  \"allow_paid\": false\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base}}/v1/uzum/claim/cancel",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "claim",
+            "cancel"
+          ]
+        },
+        "description": "Черновик отменяется бесплатно: ждём stage = cancelled. Тестовые доставки отменять в конце каждой проверки."
+      }
+    },
+    {
+      "name": "08 claim/accept — поиск курьера (только с Бахтиёром)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"{{delivery_id}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base}}/v1/uzum/claim/accept",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "claim",
+            "accept"
+          ]
+        },
+        "description": "Только для полного прогона: начинает поиск курьера. На стенде курьеров нет — без Бахтиёра доставка повиснет в поиске; после проверки отменить (07)."
+      }
+    },
+    {
+      "name": "09 claim/courier — курьер",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base}}/v1/uzum/claim/courier?id={{delivery_id}}",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "claim",
+            "courier"
+          ],
+          "query": [
+            {
+              "key": "id",
+              "value": "{{delivery_id}}"
+            }
+          ]
+        },
+        "description": "Имя, телефон, координаты, ссылка отслеживания. До назначения курьера пусто — это не ошибка."
+      }
+    },
+    {
+      "name": "10 claim/cancel — платная отмена",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"id\": \"{{delivery_id}}\",\n  \"allow_paid\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base}}/v1/uzum/claim/cancel",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "claim",
+            "cancel"
+          ]
+        },
+        "description": "Только если 07 вернул error_code = paid_cancel_not_confirmed и cancel_price устраивает."
+      }
+    },
+    {
+      "name": "11 claims — незавершённые доставки",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base}}/v1/uzum/claims?active=true&limit=20",
+          "host": [
+            "{{base}}"
+          ],
+          "path": [
+            "v1",
+            "uzum",
+            "claims"
+          ],
+          "query": [
+            {
+              "key": "active",
+              "value": "true"
+            },
+            {
+              "key": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "description": "В конце проверки тестовых доставок здесь быть не должно."
+      }
+    }
+  ]
+}
